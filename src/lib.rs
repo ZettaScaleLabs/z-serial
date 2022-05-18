@@ -16,13 +16,15 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_serial::{ClearBuffer, SerialPort, SerialPortBuilderExt, SerialStream};
 
 pub const MAX_FRAME_SIZE: usize = 1510;
+pub const MAX_MTU: usize = 1500;
+
 const CRC32_LEN: usize = 4;
+
+const SERIAL_BUF_SIZE: usize = 10;
 
 const LEN_FIELD_LEN: usize = 2;
 
 const PREAMBLE: [u8; 4] = [0xF0, 0x0F, 0x0F, 0xF0];
-
-const MAX_MTU: usize = 1500;
 
 const CRC_TABLE_SIZE: usize = 256;
 
@@ -81,7 +83,7 @@ pub struct ZSerial {
     port: String,
     baud_rate: u32,
     serial: SerialStream,
-    buff: [u8; MAX_FRAME_SIZE],
+    buff: [u8; SERIAL_BUF_SIZE],
     crc: CRC32,
 }
 
@@ -99,7 +101,7 @@ impl ZSerial {
             port,
             baud_rate,
             serial,
-            buff: [0u8; MAX_FRAME_SIZE],
+            buff: [0u8; SERIAL_BUF_SIZE],
             crc,
         })
     }
