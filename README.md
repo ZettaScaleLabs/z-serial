@@ -1,6 +1,6 @@
 # Zenoh Serial
 
-This repo contains some code for testing serial framing on rust
+This repo contains the Zenoh Frame format over serial (RS232-like) transports.
 
 # Build it
 
