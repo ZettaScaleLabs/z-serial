@@ -40,18 +40,25 @@ const POLYNOMIA: u32 = 0x04C11DB7;
 /// Max Frame Size: 1510
 /// Max MTU: 1500
 
-pub struct ZSerial {
-    port: String,
-    baud_rate: u32,
-    serial: SerialStream,
-    buff: [u8; MAX_FRAME_SIZE],
+pub struct CRC32 {
     table: [u32; CRC_TABLE_SIZE],
 }
 
-impl ZSerial {
-    pub fn new(port: String, baud_rate: u32) -> tokio_serial::Result<Self> {
+impl CRC32 {
+    pub fn compute_crc32(&self, buff: &[u8]) -> u32 {
+        let mut acc: u32 = !0;
 
-        // Generating CRC table
+        for b in buff {
+            let octect = *b;
+            acc = (acc >> 8) ^ self.table[((acc & 0xFF) ^ octect as u32) as usize]
+        }
+
+        !acc
+    }
+}
+
+impl Default for CRC32 {
+    fn default() -> Self {
         let mut table = [0u32; CRC_TABLE_SIZE];
         for n in 0..256 {
             let mut rem = n;
@@ -59,12 +66,29 @@ impl ZSerial {
             for _ in 0..8 {
                 match rem & 1 {
                     1 => rem = POLYNOMIA ^ (rem >> 1),
-                    _ => rem = rem >> 1,
+                    _ => rem >>= 1,
                 }
             }
 
             table[n as usize] = rem;
         }
+
+        Self { table }
+    }
+}
+
+pub struct ZSerial {
+    port: String,
+    baud_rate: u32,
+    serial: SerialStream,
+    buff: [u8; MAX_FRAME_SIZE],
+    crc: CRC32,
+}
+
+impl ZSerial {
+    pub fn new(port: String, baud_rate: u32) -> tokio_serial::Result<Self> {
+        // Generating CRC table
+        let crc = CRC32::default();
 
         let mut serial = tokio_serial::new(port.clone(), baud_rate).open_native_async()?;
 
@@ -76,19 +100,8 @@ impl ZSerial {
             baud_rate,
             serial,
             buff: [0u8; MAX_FRAME_SIZE],
-            table,
+            crc,
         })
-    }
-
-    pub fn compute_crc32(&self, buff: &[u8]) -> u32 {
-        let mut acc: u32 = !0;
-
-        for b in buff {
-            let octect = *b;
-            acc = (acc >> 8) ^ self.table[((acc & 0xFF) ^ octect as u32) as usize]
-        }
-
-        !acc
     }
 
     pub async fn dump(&mut self) -> tokio_serial::Result<()> {
@@ -159,7 +172,7 @@ impl ZSerial {
                     // read the data
                     self.serial.read_exact(&mut buff[0..data_size]).await?;
 
-                    start_count = start_count + 2;
+                    start_count += 2;
 
                     //read the CRC32
                     self.serial
@@ -174,7 +187,7 @@ impl ZSerial {
 
                     //println!("CRC32 {:02X?} {:02X?} {:02X?} {:02X?} ", self.buff[start_count], self.buff[start_count + 1], self.buff[start_count + 2], self.buff[start_count + 3]);
 
-                    let computed_crc = self.compute_crc32(&buff[0..data_size]);
+                    let computed_crc = self.crc.compute_crc32(&buff[0..data_size]);
 
                     if recv_crc != computed_crc {
                         return Err(tokio_serial::Error::new(
@@ -217,7 +230,7 @@ impl ZSerial {
             ));
         }
 
-        let crc32 = self.compute_crc32(buff).to_ne_bytes();
+        let crc32 = self.crc.compute_crc32(buff).to_ne_bytes();
 
         // Write the preamble
         self.serial.write_all(&PREAMBLE).await?;
@@ -234,7 +247,7 @@ impl ZSerial {
         self.serial.write_all(&size_bytes).await?;
 
         // Write the data
-        self.serial.write_all(&buff).await?;
+        self.serial.write_all(buff).await?;
 
         //Write the CRC32
         self.serial.write_all(&crc32).await?;
