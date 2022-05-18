@@ -255,7 +255,7 @@ impl ZSerial {
         self.serial.bytes_to_read()
     }
 
-    pub fn clear(&mut self) -> tokio_serial::Result<()> {
+    pub fn clear(&self) -> tokio_serial::Result<()> {
         self.serial.clear(ClearBuffer::All)
     }
 }
