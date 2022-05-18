@@ -13,7 +13,7 @@
 //
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio_serial::{SerialPortBuilderExt, SerialStream};
+use tokio_serial::{ClearBuffer, SerialPort, SerialPortBuilderExt, SerialStream};
 
 const MAX_FRAME_SIZE: usize = 1510;
 const CRC32_LEN: usize = 4;
@@ -131,8 +131,6 @@ impl ZSerial {
                 .read_exact(std::slice::from_mut(&mut self.buff[start_count]))
                 .await?;
 
-            // println!("Read {:02X?}, count {start_count}", self.buff[start_count]);
-
             if start_count == 0 {
                 if self.buff[start_count] == PREAMBLE[0] {
                     // First sync byte found
@@ -158,19 +156,12 @@ impl ZSerial {
                         .read_exact(&mut self.buff[start_count..start_count + LEN_FIELD_LEN])
                         .await?;
 
-                    // println!("Read size {:02X?} {:02X?}", self.buff[start_count], self.buff[start_count + 1]);
-
-                    let size: u16 =
-                        (self.buff[start_count + 1] as u16) << 8 | self.buff[start_count] as u16;
-
-                    // println!("Wire size {size}");
-
-                    let data_size = size as usize;
-
-                    //println!("Data size {data_size}");
+                    let size: usize = ((self.buff[start_count + 1] as u16) << 8
+                        | self.buff[start_count] as u16)
+                        as usize;
 
                     // read the data
-                    self.serial.read_exact(&mut buff[0..data_size]).await?;
+                    self.serial.read_exact(&mut buff[0..size]).await?;
 
                     start_count += 2;
 
@@ -185,9 +176,7 @@ impl ZSerial {
                         | (self.buff[start_count + 1] as u32) << 8
                         | (self.buff[start_count] as u32);
 
-                    //println!("CRC32 {:02X?} {:02X?} {:02X?} {:02X?} ", self.buff[start_count], self.buff[start_count + 1], self.buff[start_count + 2], self.buff[start_count + 3]);
-
-                    let computed_crc = self.crc.compute_crc32(&buff[0..data_size]);
+                    let computed_crc = self.crc.compute_crc32(&buff[0..size]);
 
                     if recv_crc != computed_crc {
                         return Err(tokio_serial::Error::new(
@@ -199,21 +188,22 @@ impl ZSerial {
                         ));
                     }
 
-                    return Ok(data_size);
+                    return Ok(size);
                 }
             } else {
                 // We did not find a preamble, giving up
-                //start_count = 0;
                 return Ok(0);
             }
         }
     }
 
-    pub async fn read(serial: &mut SerialStream, buff: &mut [u8]) -> tokio_serial::Result<usize> {
+    #[allow(dead_code)]
+    async fn read(serial: &mut SerialStream, buff: &mut [u8]) -> tokio_serial::Result<usize> {
         Ok(serial.read(buff).await?)
     }
 
-    pub async fn read_all(serial: &mut SerialStream, buff: &mut [u8]) -> tokio_serial::Result<()> {
+    #[allow(dead_code)]
+    async fn read_all(serial: &mut SerialStream, buff: &mut [u8]) -> tokio_serial::Result<()> {
         let mut read: usize = 0;
         while read < buff.len() {
             let n = Self::read(serial, &mut buff[read..]).await?;
@@ -237,11 +227,7 @@ impl ZSerial {
 
         let wire_size: u16 = buff.len() as u16;
 
-        // println!("Data size {} wire size {wire_size}",buff.len());
-
         let size_bytes = wire_size.to_ne_bytes();
-
-        // println!("Size on the wire {size_bytes:02X?}");
 
         // Write the len
         self.serial.write_all(&size_bytes).await?;
@@ -251,8 +237,6 @@ impl ZSerial {
 
         //Write the CRC32
         self.serial.write_all(&crc32).await?;
-
-        // self.serial.flush().await?;
 
         Ok(())
     }
@@ -265,5 +249,13 @@ impl ZSerial {
     /// Gets the configured serial port
     pub fn port(&self) -> String {
         self.port.clone()
+    }
+
+    pub fn bytes_to_read(&self) -> tokio_serial::Result<u32> {
+        self.serial.bytes_to_read()
+    }
+
+    pub fn clear(&mut self) -> tokio_serial::Result<()> {
+        self.serial.clear(ClearBuffer::All)
     }
 }
