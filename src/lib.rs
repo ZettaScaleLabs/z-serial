@@ -15,7 +15,7 @@
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_serial::{ClearBuffer, SerialPort, SerialPortBuilderExt, SerialStream};
 
-const MAX_FRAME_SIZE: usize = 1510;
+pub const MAX_FRAME_SIZE: usize = 1510;
 const CRC32_LEN: usize = 4;
 
 const LEN_FIELD_LEN: usize = 2;
