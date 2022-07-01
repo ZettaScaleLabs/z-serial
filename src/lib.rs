@@ -20,11 +20,14 @@ pub const MAX_MTU: usize = 1500;
 
 const CRC32_LEN: usize = 4;
 
-const SERIAL_BUF_SIZE: usize = 10;
+const SERIAL_BUF_SIZE: usize = 1500;
+
+// Given by cobs::max_encoding_length(MAX_FRAME_SIZE)
+const COBS_BUF_SIZE: usize = 1516;
 
 const LEN_FIELD_LEN: usize = 2;
 
-const PREAMBLE: [u8; 4] = [0xF0, 0x0F, 0x0F, 0xF0];
+const SENTINEL: u8 = 0x00;
 
 const CRC_TABLE_SIZE: usize = 256;
 
@@ -32,12 +35,13 @@ const POLYNOMIA: u32 = 0x04C11DB7;
 
 /// ZSerial Frame Format
 ///
+/// Using COBS
 ///
-/// +--------+----+------------+--------+
-/// |F00F0FF0|XXXX|ZZZZ....ZZZZ|CCCCCCCC|
-/// +--------+----+------------+--------+
-/// |Preamble| Len|   Data     |  CRC32 |
-/// +----4---+-2--+----N-------+---4----+
+/// +----+------------+--------+-+
+/// |XXXX|ZZZZ....ZZZZ|CCCCCCCC|0|
+/// +----+------------+--------+-+
+/// | Len|   Data     |  CRC32 |C|
+/// +-2--+----N-------+---4----+-+
 ///
 /// Max Frame Size: 1510
 /// Max MTU: 1500
@@ -83,7 +87,8 @@ pub struct ZSerial {
     port: String,
     baud_rate: u32,
     serial: SerialStream,
-    buff: [u8; SERIAL_BUF_SIZE],
+    buff: Vec<u8>,     //[u8; SERIAL_BUF_SIZE],
+    ser_buff: Vec<u8>, //[u8; COBS_BUF_SIZE],
     crc: CRC32,
 }
 
@@ -101,7 +106,8 @@ impl ZSerial {
             port,
             baud_rate,
             serial,
-            buff: [0u8; SERIAL_BUF_SIZE],
+            buff: vec![0u8; SERIAL_BUF_SIZE],
+            ser_buff: vec![0u8; COBS_BUF_SIZE],
             crc,
         })
     }
@@ -125,78 +131,62 @@ impl ZSerial {
         }
 
         loop {
-            // Wait for sync preamble: 0xF0 0x0F 0x0F 0xF0
-
-            // Read one byte
-
-            self.serial
-                .read_exact(std::slice::from_mut(&mut self.buff[start_count]))
-                .await?;
-
-            if start_count == 0 {
-                if self.buff[start_count] == PREAMBLE[0] {
-                    // First sync byte found
-                    start_count = 1;
-                }
-            } else if start_count == 1 {
-                if self.buff[start_count] == PREAMBLE[1] {
-                    // Second sync byte found
-                    start_count = 2;
-                }
-            } else if start_count == 2 {
-                if self.buff[start_count] == PREAMBLE[2] {
-                    // Third sync byte found
-                    start_count = 3;
-                }
-            } else if start_count == 3 {
-                if self.buff[start_count] == PREAMBLE[3] {
-                    // fourth and last sync byte found
-                    start_count = 4;
-
-                    // lets read the len now
-                    self.serial
-                        .read_exact(&mut self.buff[start_count..start_count + LEN_FIELD_LEN])
-                        .await?;
-
-                    let size: usize = ((self.buff[start_count + 1] as u16) << 8
-                        | self.buff[start_count] as u16)
-                        as usize;
-
-                    // read the data
-                    self.serial.read_exact(&mut buff[0..size]).await?;
-
-                    start_count += 2;
-
-                    //read the CRC32
-                    self.serial
-                        .read_exact(&mut self.buff[start_count..start_count + CRC32_LEN])
-                        .await?;
-
-                    // reading CRC32
-                    let recv_crc: u32 = (self.buff[start_count + 3] as u32) << 24
-                        | (self.buff[start_count + 2] as u32) << 16
-                        | (self.buff[start_count + 1] as u32) << 8
-                        | (self.buff[start_count] as u32);
-
-                    let computed_crc = self.crc.compute_crc32(&buff[0..size]);
-
-                    if recv_crc != computed_crc {
-                        return Err(tokio_serial::Error::new(
-                            tokio_serial::ErrorKind::InvalidInput,
-                            format!(
-                                "CRC does not match Received {:02X?} Computed {:02X?}",
-                                recv_crc, computed_crc
-                            ),
-                        ));
-                    }
-
-                    return Ok(size);
-                }
-            } else {
-                // We did not find a preamble, giving up
+            // Check if we are reading too much, maybe we lost the sentinel.
+            if start_count == COBS_BUF_SIZE {
                 return Ok(0);
             }
+
+            // Read one byte at time until we reach the sentinel
+            self.serial
+                .read_exact(std::slice::from_mut(&mut self.ser_buff[start_count]))
+                .await?;
+
+            if self.ser_buff[start_count] == SENTINEL {
+                break;
+            }
+            start_count += 1;
         }
+        let _size =
+            cobs::decode_in_place_with_sentinel(&mut self.ser_buff[0..start_count], SENTINEL)
+                .map_err(|e| {
+                    tokio_serial::Error::new(
+                        tokio_serial::ErrorKind::InvalidInput,
+                        format!("Unable COBS decode: {e:?}"),
+                    )
+                })?;
+
+        // Decoding message size
+        let wire_size = ((self.ser_buff[1] as u16) << 8 | self.ser_buff[0] as u16) as usize;
+
+        // Getting the data
+        let data = &self.ser_buff[LEN_FIELD_LEN..wire_size + LEN_FIELD_LEN];
+
+        // Getting and decoding CRC
+        let crc_received_bytes =
+            &self.ser_buff[LEN_FIELD_LEN + wire_size..LEN_FIELD_LEN + wire_size + CRC32_LEN];
+
+        let recv_crc: u32 = ((crc_received_bytes[3] as u32) << 24)
+            | ((crc_received_bytes[2] as u32) << 16)
+            | ((crc_received_bytes[1] as u32) << 8)
+            | (crc_received_bytes[0] as u32);
+
+        // Compute CRC locally
+        let computed_crc = self.crc.compute_crc32(&data[0..wire_size]);
+
+        if recv_crc != computed_crc {
+            return Err(tokio_serial::Error::new(
+                tokio_serial::ErrorKind::InvalidInput,
+                format!(
+                    "CRC does not match Received {:02X?} Computed {:02X?}",
+                    recv_crc, computed_crc
+                ),
+            ));
+        }
+
+        // Copy into user slice.
+        buff[0..wire_size].copy_from_slice(data);
+
+        return Ok(wire_size);
     }
 
     #[allow(dead_code)]
@@ -222,23 +212,32 @@ impl ZSerial {
             ));
         }
 
+        // Compute crc
         let crc32 = self.crc.compute_crc32(buff).to_ne_bytes();
 
-        // Write the preamble
-        self.serial.write_all(&PREAMBLE).await?;
-
+        // Compute wise_size
         let wire_size: u16 = buff.len() as u16;
 
         let size_bytes = wire_size.to_ne_bytes();
 
-        // Write the len
-        self.serial.write_all(&size_bytes).await?;
+        // Copy into serialization buffer
+        self.buff[0..LEN_FIELD_LEN].copy_from_slice(&size_bytes);
+        self.buff[LEN_FIELD_LEN..LEN_FIELD_LEN + buff.len()].copy_from_slice(&buff);
+        self.buff[LEN_FIELD_LEN + buff.len()..LEN_FIELD_LEN + buff.len() + CRC32_LEN]
+            .copy_from_slice(&crc32);
 
-        // Write the data
-        self.serial.write_all(buff).await?;
+        let total_len = LEN_FIELD_LEN + CRC32_LEN + buff.len();
 
-        //Write the CRC32
-        self.serial.write_all(&crc32).await?;
+        // COBS encode
+        let written =
+            cobs::encode_with_sentinel(&self.buff[0..total_len], &mut self.ser_buff, SENTINEL);
+        // Add sentinel byte, marks the end of a message
+        self.ser_buff[written + 1] = SENTINEL;
+
+        // Write over serial
+        self.serial
+            .write_all(&self.ser_buff[0..written + 1])
+            .await?;
 
         Ok(())
     }
