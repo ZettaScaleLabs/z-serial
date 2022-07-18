@@ -20,11 +20,12 @@ pub const MAX_MTU: usize = 1500;
 
 const CRC32_LEN: usize = 4;
 
-const SERIAL_BUF_SIZE: usize = 10;
+// Given by cobs::max_encoding_length(MAX_FRAME_SIZE)
+const COBS_BUF_SIZE: usize = 1516;
 
 const LEN_FIELD_LEN: usize = 2;
 
-const PREAMBLE: [u8; 4] = [0xF0, 0x0F, 0x0F, 0xF0];
+const SENTINEL: u8 = 0x00;
 
 const CRC_TABLE_SIZE: usize = 256;
 
@@ -32,16 +33,19 @@ const POLYNOMIA: u32 = 0x04C11DB7;
 
 /// ZSerial Frame Format
 ///
+/// Using COBS
 ///
-/// +--------+----+------------+--------+
-/// |F00F0FF0|XXXX|ZZZZ....ZZZZ|CCCCCCCC|
-/// +--------+----+------------+--------+
-/// |Preamble| Len|   Data     |  CRC32 |
-/// +----4---+-2--+----N-------+---4----+
+/// +-+----+------------+--------+-+
+/// |O|XXXX|ZZZZ....ZZZZ|CCCCCCCC|0|
+/// +-+----+------------+--------+-+
+/// |O| Len|   Data     |  CRC32 |C|
+/// +-+-2--+----N-------+---4----+-+
 ///
 /// Max Frame Size: 1510
 /// Max MTU: 1500
+/// Max On-the-wire length: 1516 (MFS + Overhead Byte (OHB) + End of packet (EOP))
 
+#[derive(Debug)]
 pub struct CRC32 {
     table: [u32; CRC_TABLE_SIZE],
 }
@@ -79,19 +83,120 @@ impl Default for CRC32 {
     }
 }
 
+#[derive(Debug)]
+struct WireFormat {
+    buff: Vec<u8>,
+    crc: CRC32,
+}
+
+impl WireFormat {
+    pub(crate) fn new() -> Self {
+        // Generating CRC table
+        let crc = CRC32::default();
+
+        Self {
+            buff: vec![0u8; COBS_BUF_SIZE],
+            crc,
+        }
+    }
+
+    pub(crate) fn serialize_into(
+        &mut self,
+        src: &[u8],
+        dest: &mut [u8],
+    ) -> tokio_serial::Result<usize> {
+        if src.len() > MAX_MTU {
+            return Err(tokio_serial::Error::new(
+                tokio_serial::ErrorKind::InvalidInput,
+                "Payload is too big",
+            ));
+        }
+
+        // Compute CRC
+        let crc32 = self.crc.compute_crc32(src).to_ne_bytes();
+
+        // Compute wise_size
+        let wire_size: u16 = src.len() as u16;
+
+        let size_bytes = wire_size.to_ne_bytes();
+
+        // Copy into serialization buffer
+        self.buff[0..LEN_FIELD_LEN].copy_from_slice(&size_bytes);
+        self.buff[LEN_FIELD_LEN..LEN_FIELD_LEN + src.len()].copy_from_slice(src);
+        self.buff[LEN_FIELD_LEN + src.len()..LEN_FIELD_LEN + src.len() + CRC32_LEN]
+            .copy_from_slice(&crc32);
+
+        let total_len = LEN_FIELD_LEN + CRC32_LEN + src.len();
+
+        // COBS encode
+        let mut written = cobs::encode_with_sentinel(&self.buff[0..total_len], dest, SENTINEL);
+
+        // Add sentinel byte, marks the end of a message
+        dest[written] = SENTINEL;
+        written += 1;
+
+        Ok(written)
+    }
+
+    pub(crate) fn deserialize_into(
+        &self,
+        src: &mut [u8],
+        dst: &mut [u8],
+    ) -> tokio_serial::Result<usize> {
+        let _size = cobs::decode_in_place_with_sentinel(src, SENTINEL).map_err(|e| {
+            tokio_serial::Error::new(
+                tokio_serial::ErrorKind::InvalidInput,
+                format!("Unable COBS decode: {e:?}"),
+            )
+        })?;
+
+        // Decoding message size
+        let wire_size = ((src[1] as u16) << 8 | src[0] as u16) as usize;
+
+        // Getting the data
+        let data = &src[LEN_FIELD_LEN..wire_size + LEN_FIELD_LEN];
+
+        // Getting and decoding CRC
+        let crc_received_bytes =
+            &src[LEN_FIELD_LEN + wire_size..LEN_FIELD_LEN + wire_size + CRC32_LEN];
+
+        let recv_crc: u32 = ((crc_received_bytes[3] as u32) << 24)
+            | ((crc_received_bytes[2] as u32) << 16)
+            | ((crc_received_bytes[1] as u32) << 8)
+            | (crc_received_bytes[0] as u32);
+
+        // Compute CRC locally
+        let computed_crc = self.crc.compute_crc32(&data[0..wire_size]);
+
+        // Check CRC
+        if recv_crc != computed_crc {
+            return Err(tokio_serial::Error::new(
+                tokio_serial::ErrorKind::InvalidInput,
+                format!(
+                    "CRC does not match Received {:02X?} Computed {:02X?}",
+                    recv_crc, computed_crc
+                ),
+            ));
+        }
+
+        // Copy into user slice.
+        dst[0..wire_size].copy_from_slice(data);
+
+        Ok(wire_size)
+    }
+}
+
 pub struct ZSerial {
     port: String,
     baud_rate: u32,
     serial: SerialStream,
-    buff: [u8; SERIAL_BUF_SIZE],
-    crc: CRC32,
+    send_buff: Vec<u8>,
+    recv_buff: Vec<u8>,
+    formatter: WireFormat,
 }
 
 impl ZSerial {
     pub fn new(port: String, baud_rate: u32) -> tokio_serial::Result<Self> {
-        // Generating CRC table
-        let crc = CRC32::default();
-
         let mut serial = tokio_serial::new(port.clone(), baud_rate).open_native_async()?;
 
         #[cfg(unix)]
@@ -101,16 +206,17 @@ impl ZSerial {
             port,
             baud_rate,
             serial,
-            buff: [0u8; SERIAL_BUF_SIZE],
-            crc,
+            send_buff: vec![0u8; COBS_BUF_SIZE],
+            recv_buff: vec![0u8; COBS_BUF_SIZE],
+            formatter: WireFormat::new(),
         })
     }
 
     pub async fn dump(&mut self) -> tokio_serial::Result<()> {
         self.serial
-            .read_exact(std::slice::from_mut(&mut self.buff[0]))
+            .read_exact(std::slice::from_mut(&mut self.recv_buff[0]))
             .await?;
-        println!("Read {:02X?}", self.buff[0]);
+        println!("Read {:02X?}", self.recv_buff[0]);
         Ok(())
     }
 
@@ -124,79 +230,34 @@ impl ZSerial {
             ));
         }
 
+        // Read
         loop {
-            // Wait for sync preamble: 0xF0 0x0F 0x0F 0xF0
-
-            // Read one byte
-
-            self.serial
-                .read_exact(std::slice::from_mut(&mut self.buff[start_count]))
-                .await?;
-
-            if start_count == 0 {
-                if self.buff[start_count] == PREAMBLE[0] {
-                    // First sync byte found
-                    start_count = 1;
-                }
-            } else if start_count == 1 {
-                if self.buff[start_count] == PREAMBLE[1] {
-                    // Second sync byte found
-                    start_count = 2;
-                }
-            } else if start_count == 2 {
-                if self.buff[start_count] == PREAMBLE[2] {
-                    // Third sync byte found
-                    start_count = 3;
-                }
-            } else if start_count == 3 {
-                if self.buff[start_count] == PREAMBLE[3] {
-                    // fourth and last sync byte found
-                    start_count = 4;
-
-                    // lets read the len now
-                    self.serial
-                        .read_exact(&mut self.buff[start_count..start_count + LEN_FIELD_LEN])
-                        .await?;
-
-                    let size: usize = ((self.buff[start_count + 1] as u16) << 8
-                        | self.buff[start_count] as u16)
-                        as usize;
-
-                    // read the data
-                    self.serial.read_exact(&mut buff[0..size]).await?;
-
-                    start_count += 2;
-
-                    //read the CRC32
-                    self.serial
-                        .read_exact(&mut self.buff[start_count..start_count + CRC32_LEN])
-                        .await?;
-
-                    // reading CRC32
-                    let recv_crc: u32 = (self.buff[start_count + 3] as u32) << 24
-                        | (self.buff[start_count + 2] as u32) << 16
-                        | (self.buff[start_count + 1] as u32) << 8
-                        | (self.buff[start_count] as u32);
-
-                    let computed_crc = self.crc.compute_crc32(&buff[0..size]);
-
-                    if recv_crc != computed_crc {
-                        return Err(tokio_serial::Error::new(
-                            tokio_serial::ErrorKind::InvalidInput,
-                            format!(
-                                "CRC does not match Received {:02X?} Computed {:02X?}",
-                                recv_crc, computed_crc
-                            ),
-                        ));
-                    }
-
-                    return Ok(size);
-                }
-            } else {
-                // We did not find a preamble, giving up
+            // Check if we are reading too much, maybe we lost the sentinel.
+            if start_count == COBS_BUF_SIZE {
                 return Ok(0);
             }
+
+            // Read one byte at time until we reach the sentinel
+            self.serial
+                .read_exact(std::slice::from_mut(&mut self.recv_buff[start_count]))
+                .await?;
+
+            if self.recv_buff[start_count] == SENTINEL {
+                break;
+            }
+            start_count += 1;
         }
+
+        start_count += 1;
+
+        log::trace!(
+            "Read {start_count}bytes COBS {:02X?}",
+            &self.recv_buff[0..start_count]
+        );
+
+        // Deserialize
+        self.formatter
+            .deserialize_into(&mut self.recv_buff[0..start_count], buff)
     }
 
     #[allow(dead_code)]
@@ -215,31 +276,16 @@ impl ZSerial {
     }
 
     pub async fn write(&mut self, buff: &[u8]) -> tokio_serial::Result<()> {
-        if buff.len() > MAX_MTU {
-            return Err(tokio_serial::Error::new(
-                tokio_serial::ErrorKind::InvalidInput,
-                "Payload is too big",
-            ));
-        }
+        // Serialize
+        let written = self.formatter.serialize_into(buff, &mut self.send_buff)?;
 
-        let crc32 = self.crc.compute_crc32(buff).to_ne_bytes();
+        log::trace!(
+            "Wrote {written}bytes COBS {:02X?}",
+            &self.send_buff[0..written]
+        );
 
-        // Write the preamble
-        self.serial.write_all(&PREAMBLE).await?;
-
-        let wire_size: u16 = buff.len() as u16;
-
-        let size_bytes = wire_size.to_ne_bytes();
-
-        // Write the len
-        self.serial.write_all(&size_bytes).await?;
-
-        // Write the data
-        self.serial.write_all(buff).await?;
-
-        //Write the CRC32
-        self.serial.write_all(&crc32).await?;
-
+        // Write
+        self.serial.write_all(&self.send_buff[0..written]).await?;
         Ok(())
     }
 
@@ -259,5 +305,82 @@ impl ZSerial {
 
     pub fn clear(&self) -> tokio_serial::Result<()> {
         self.serial.clear(ClearBuffer::All)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{WireFormat, COBS_BUF_SIZE};
+
+    #[test]
+    fn test_ser() {
+        let mut formatter = WireFormat::new();
+        let mut ser_buff = vec![0u8; COBS_BUF_SIZE];
+
+        let data: Vec<u8> = vec![0x00, 0x11, 0x00];
+
+        // COBS encoded | 0x03 0x00 | 0x00 0x11 0x00 | 0x73 0xEC 0x75 0xF9 |
+        //              |   Len     |   Data         |      CRC32          |
+        let serialzed_data: Vec<u8> = vec![
+            0x02, 0x03, 0x01, 0x02, 0x11, 0x05, 0x73, 0xEC, 0x75, 0xF9, 0x00,
+        ];
+
+        // Checks serialization
+        let written = formatter.serialize_into(&data, &mut ser_buff).unwrap();
+        assert_eq!(written, serialzed_data.len());
+        assert_eq!(serialzed_data, ser_buff[0..written]);
+
+        //2nd Check
+
+        let data: Vec<u8> = vec![0x11, 0x22, 0x00, 0x33];
+
+        // COBS encoded | 0x04 0x00 | 0x11 0x22 0x00 0x33 | 0x8D 0x03 0x6D 0xFB |
+        //              |   Len     |   Data              |      CRC32          |
+        let serialzed_data: Vec<u8> = vec![
+            0x02, 0x04, 0x03, 0x11, 0x22, 0x06, 0x33, 0x8D, 0x03, 0x6D, 0xFB, 0x00,
+        ];
+
+        let written = formatter.serialize_into(&data, &mut ser_buff).unwrap();
+        assert_eq!(written, serialzed_data.len());
+        assert_eq!(serialzed_data, ser_buff[0..written]);
+    }
+
+    #[test]
+    fn test_de() {
+        let formatter = WireFormat::new();
+        let mut buff = vec![0u8; COBS_BUF_SIZE];
+
+        let data: Vec<u8> = vec![0x00, 0x11, 0x00];
+        // COBS encoded | 0x03 0x00 | 0x00 0x11 0x00 | 0x73 0xEC 0x75 0xF9 |
+        //              |   Len     |   Data         |      CRC32          |
+        let mut serialzed_data: Vec<u8> = vec![
+            0x02, 0x03, 0x01, 0x02, 0x11, 0x05, 0x73, 0xEC, 0x75, 0xF9, 0x00,
+        ];
+        let serialized_len = serialzed_data.len();
+
+        let read = formatter
+            .deserialize_into(&mut serialzed_data[0..serialized_len], &mut buff)
+            .unwrap();
+
+        assert_eq!(read, data.len());
+        assert_eq!(buff[0..read], data);
+
+        //2nd Check
+
+        let data: Vec<u8> = vec![0x11, 0x22, 0x00, 0x33];
+
+        // COBS encoded | 0x04 0x00 | 0x11 0x22 0x00 0x33 | 0x8D 0x03 0x6D 0xFB |
+        //              |   Len     |   Data              |      CRC32          |
+        let mut serialzed_data: Vec<u8> = vec![
+            0x02, 0x04, 0x03, 0x11, 0x22, 0x06, 0x33, 0x8D, 0x03, 0x6D, 0xFB, 0x00,
+        ];
+        let serialized_len = serialzed_data.len();
+
+        let read = formatter
+            .deserialize_into(&mut serialzed_data[0..serialized_len], &mut buff)
+            .unwrap();
+
+        assert_eq!(read, data.len());
+        assert_eq!(buff[0..read], data);
     }
 }

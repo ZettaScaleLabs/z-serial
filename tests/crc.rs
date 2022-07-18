@@ -17,6 +17,28 @@ use z_serial::CRC32;
 
 const MAX_ITERATIONS: usize = 4096;
 
+// FIXME: fix this test
+// #[test]
+// fn check_test_vectors() {
+//     // (:digest-test #a"" #h"00000000")
+//     // (:digest-test #a"a" #h"e8b7be43")
+//     // (:digest-test #a"abc" #h"352441c2")
+//     // (:digest-test #a"message digest" #h"20159d7f")
+//     // (:digest-test #a"abcdefghijklmnopqrstuvwxyz" #h"4c2750bd")
+//     // (:digest-test #a"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789" #h"1fc2e6d2")
+//     // (:digest-test #a"12345678901234567890123456789012345678901234567890123456789012345678901234567890" #h"7ca94a72")
+
+//     let data: Vec<u8> = vec![];
+//     let crc = CRC32::default();
+
+//     let empty_crc = 0u32;
+//     assert_eq!(crc.compute_crc32(&data), empty_crc);
+
+//     let data: Vec<u8> = String::from("a").into_bytes();
+//     let a_crc = 0xe8b7be43;
+//     assert_eq!(crc.compute_crc32(&data), a_crc);
+// }
+
 #[test]
 fn check_same_crc() {
     let mut rng = rand::thread_rng();
