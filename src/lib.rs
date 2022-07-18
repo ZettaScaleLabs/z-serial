@@ -103,7 +103,7 @@ impl WireFormat {
     pub(crate) fn serialize_into(
         &mut self,
         src: &[u8],
-        mut dest: &mut [u8],
+        dest: &mut [u8],
     ) -> tokio_serial::Result<usize> {
         if src.len() > MAX_MTU {
             return Err(tokio_serial::Error::new(
@@ -122,14 +122,14 @@ impl WireFormat {
 
         // Copy into serialization buffer
         self.buff[0..LEN_FIELD_LEN].copy_from_slice(&size_bytes);
-        self.buff[LEN_FIELD_LEN..LEN_FIELD_LEN + src.len()].copy_from_slice(&src);
+        self.buff[LEN_FIELD_LEN..LEN_FIELD_LEN + src.len()].copy_from_slice(src);
         self.buff[LEN_FIELD_LEN + src.len()..LEN_FIELD_LEN + src.len() + CRC32_LEN]
             .copy_from_slice(&crc32);
 
         let total_len = LEN_FIELD_LEN + CRC32_LEN + src.len();
 
         // COBS encode
-        let written = cobs::encode_with_sentinel(&self.buff[0..total_len], &mut dest, SENTINEL);
+        let written = cobs::encode_with_sentinel(&self.buff[0..total_len], dest, SENTINEL);
 
         // Add sentinel byte, marks the end of a message
         dest[written + 1] = SENTINEL;
@@ -138,10 +138,10 @@ impl WireFormat {
 
     pub(crate) fn deserialize_into(
         &self,
-        mut src: &mut [u8],
+        src: &mut [u8],
         dst: &mut [u8],
     ) -> tokio_serial::Result<usize> {
-        let _size = cobs::decode_in_place_with_sentinel(&mut src, SENTINEL).map_err(|e| {
+        let _size = cobs::decode_in_place_with_sentinel(src, SENTINEL).map_err(|e| {
             tokio_serial::Error::new(
                 tokio_serial::ErrorKind::InvalidInput,
                 format!("Unable COBS decode: {e:?}"),
