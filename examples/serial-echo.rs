@@ -33,6 +33,9 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> tokio_serial::Result<()> {
+    // initiate logging
+    env_logger::init();
+
     let args = Args::parse();
     let mut buff = [0u8; 65535];
 
@@ -78,7 +81,7 @@ async fn main() -> tokio_serial::Result<()> {
                 tokio::time::sleep(Duration::from_secs_f64(timeout_duration)).await;
             };
 
-            let _out = tokio::select! {
+            tokio::select! {
                 res = port.read_msg(&mut buff) => {
                     let read = res?;
                     if read > 0 {

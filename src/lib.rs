@@ -129,11 +129,13 @@ impl WireFormat {
         let total_len = LEN_FIELD_LEN + CRC32_LEN + src.len();
 
         // COBS encode
-        let written = cobs::encode_with_sentinel(&self.buff[0..total_len], dest, SENTINEL);
+        let mut written = cobs::encode_with_sentinel(&self.buff[0..total_len], dest, SENTINEL);
 
         // Add sentinel byte, marks the end of a message
-        dest[written + 1] = SENTINEL;
-        Ok(written + 1)
+        dest[written] = SENTINEL;
+        written += 1;
+
+        Ok(written)
     }
 
     pub(crate) fn deserialize_into(
@@ -188,7 +190,8 @@ pub struct ZSerial {
     port: String,
     baud_rate: u32,
     serial: SerialStream,
-    ser_buff: Vec<u8>,
+    send_buff: Vec<u8>,
+    recv_buff: Vec<u8>,
     formatter: WireFormat,
 }
 
@@ -203,16 +206,17 @@ impl ZSerial {
             port,
             baud_rate,
             serial,
-            ser_buff: vec![0u8; COBS_BUF_SIZE],
+            send_buff: vec![0u8; COBS_BUF_SIZE],
+            recv_buff: vec![0u8; COBS_BUF_SIZE],
             formatter: WireFormat::new(),
         })
     }
 
     pub async fn dump(&mut self) -> tokio_serial::Result<()> {
         self.serial
-            .read_exact(std::slice::from_mut(&mut self.ser_buff[0]))
+            .read_exact(std::slice::from_mut(&mut self.recv_buff[0]))
             .await?;
-        println!("Read {:02X?}", self.ser_buff[0]);
+        println!("Read {:02X?}", self.recv_buff[0]);
         Ok(())
     }
 
@@ -235,22 +239,25 @@ impl ZSerial {
 
             // Read one byte at time until we reach the sentinel
             self.serial
-                .read_exact(std::slice::from_mut(&mut self.ser_buff[start_count]))
+                .read_exact(std::slice::from_mut(&mut self.recv_buff[start_count]))
                 .await?;
 
-            log::trace!("Read {:02X?}", self.ser_buff[start_count]);
-
-            if self.ser_buff[start_count] == SENTINEL {
+            if self.recv_buff[start_count] == SENTINEL {
                 break;
             }
             start_count += 1;
         }
 
-        log::trace!("Read COBS {:02X?}", &self.ser_buff[0..start_count]);
+        start_count += 1;
+
+        log::trace!(
+            "Read {start_count}bytes COBS {:02X?}",
+            &self.recv_buff[0..start_count]
+        );
 
         // Deserialize
         self.formatter
-            .deserialize_into(&mut self.ser_buff[0..start_count], buff)
+            .deserialize_into(&mut self.recv_buff[0..start_count], buff)
     }
 
     #[allow(dead_code)]
@@ -270,12 +277,15 @@ impl ZSerial {
 
     pub async fn write(&mut self, buff: &[u8]) -> tokio_serial::Result<()> {
         // Serialize
-        let written = self.formatter.serialize_into(buff, &mut self.ser_buff)?;
+        let written = self.formatter.serialize_into(buff, &mut self.send_buff)?;
 
-        log::trace!("Wrote COBS {:02X?}", &self.ser_buff[0..written]);
+        log::trace!(
+            "Wrote {written}bytes COBS {:02X?}",
+            &self.send_buff[0..written]
+        );
 
         // Write
-        self.serial.write_all(&self.ser_buff[0..written]).await?;
+        self.serial.write_all(&self.send_buff[0..written]).await?;
         Ok(())
     }
 
