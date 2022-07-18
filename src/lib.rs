@@ -238,11 +238,15 @@ impl ZSerial {
                 .read_exact(std::slice::from_mut(&mut self.ser_buff[start_count]))
                 .await?;
 
+            log::trace!("Read {:02X?}", self.ser_buff[start_count]);
+
             if self.ser_buff[start_count] == SENTINEL {
                 break;
             }
             start_count += 1;
         }
+
+        log::trace!("Read COBS {:02X?}", &self.ser_buff[0..start_count]);
 
         // Deserialize
         self.formatter
@@ -267,6 +271,9 @@ impl ZSerial {
     pub async fn write(&mut self, buff: &[u8]) -> tokio_serial::Result<()> {
         // Serialize
         let written = self.formatter.serialize_into(buff, &mut self.ser_buff)?;
+
+        log::trace!("Wrote COBS {:02X?}", &self.ser_buff[0..written]);
+
         // Write
         self.serial.write_all(&self.ser_buff[0..written]).await?;
         Ok(())
