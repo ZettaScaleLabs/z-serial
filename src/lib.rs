@@ -286,6 +286,7 @@ impl ZSerial {
 
         // Write
         self.serial.write_all(&self.send_buff[0..written]).await?;
+        self.serial.flush().await?;
         Ok(())
     }
 
