@@ -196,11 +196,11 @@ pub struct ZSerial {
 }
 
 impl ZSerial {
-    pub fn new(port: String, baud_rate: u32) -> tokio_serial::Result<Self> {
+    pub fn new(port: String, baud_rate: u32, exclusive: bool) -> tokio_serial::Result<Self> {
         let mut serial = tokio_serial::new(port.clone(), baud_rate).open_native_async()?;
 
         #[cfg(unix)]
-        serial.set_exclusive(false)?;
+        serial.set_exclusive(exclusive)?;
 
         Ok(Self {
             port,

@@ -41,7 +41,7 @@ async fn main() -> tokio_serial::Result<()> {
 
     println!("Arguments: {:?}", args);
 
-    let mut port = ZSerial::new(args.port, args.baud_rate)?;
+    let mut port = ZSerial::new(args.port, args.baud_rate, true)?;
 
     if args.server {
         loop {
