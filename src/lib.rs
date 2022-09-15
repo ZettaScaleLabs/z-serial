@@ -128,6 +128,11 @@ impl WireFormat {
 
         let total_len = LEN_FIELD_LEN + CRC32_LEN + src.len();
 
+        log::trace!(
+            "Frame before COBS encoding {:02X?}",
+            &self.buff[0..total_len]
+        );
+
         // COBS encode
         let mut written = cobs::encode_with_sentinel(&self.buff[0..total_len], dest, SENTINEL);
 
@@ -143,12 +148,14 @@ impl WireFormat {
         src: &mut [u8],
         dst: &mut [u8],
     ) -> tokio_serial::Result<usize> {
-        let _size = cobs::decode_in_place_with_sentinel(src, SENTINEL).map_err(|e| {
+        let decoded_size = cobs::decode_in_place_with_sentinel(src, SENTINEL).map_err(|e| {
             tokio_serial::Error::new(
                 tokio_serial::ErrorKind::InvalidInput,
                 format!("Unable COBS decode: {e:?}"),
             )
         })?;
+
+        log::trace!("Frame after COBS encoding {:02X?}", &src[0..decoded_size]);
 
         // Decoding message size
         let wire_size = ((src[1] as u16) << 8 | src[0] as u16) as usize;
@@ -167,6 +174,8 @@ impl WireFormat {
 
         // Compute CRC locally
         let computed_crc = self.crc.compute_crc32(&data[0..wire_size]);
+
+        log::trace!("Received CRC {recv_crc:02X?}  Computed CRC {computed_crc:02X?}");
 
         // Check CRC
         if recv_crc != computed_crc {
