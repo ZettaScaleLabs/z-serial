@@ -210,6 +210,7 @@ impl ZSerial {
 
         #[cfg(unix)]
         serial.set_exclusive(exclusive)?;
+        serial.clear(ClearBuffer::All)?;
 
         Ok(Self {
             port,
