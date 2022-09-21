@@ -157,13 +157,28 @@ impl WireFormat {
 
         log::trace!("Frame after COBS encoding {:02X?}", &src[0..decoded_size]);
 
+        // Check if message has the minimum size
+        if decoded_size < LEN_FIELD_LEN + CRC32_LEN {
+            return Err(tokio_serial::Error::new(
+                tokio_serial::ErrorKind::InvalidInput,
+                "Serial is smaller than the minimum size",
+            ));
+        }
+
         // Decoding message size
         let wire_size = ((src[1] as u16) << 8 | src[0] as u16) as usize;
+
+        // Check if the frame size is correct
+        if LEN_FIELD_LEN + wire_size + CRC32_LEN != decoded_size {
+            return Err(tokio_serial::Error::new(
+                tokio_serial::ErrorKind::InvalidInput,
+                "Payload does not match the its size",
+            ));
+        }
 
         // Getting the data
         let data = &src[LEN_FIELD_LEN..wire_size + LEN_FIELD_LEN];
 
-        // Getting and decoding CRC
         let crc_received_bytes =
             &src[LEN_FIELD_LEN + wire_size..LEN_FIELD_LEN + wire_size + CRC32_LEN];
 
@@ -261,7 +276,7 @@ impl ZSerial {
         start_count += 1;
 
         log::trace!(
-            "Read {start_count}bytes COBS {:02X?}",
+            "Read {start_count} bytes COBS {:02X?}",
             &self.recv_buff[0..start_count]
         );
 
