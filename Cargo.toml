@@ -15,7 +15,7 @@
 
 [package]
 name = "z-serial"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 repository = "https://github.com/ZettaScaleLabs/z-serial"
 homepage = "http://zenoh.io"
