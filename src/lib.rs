@@ -12,6 +12,7 @@
 //   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 //
 
+use std::path::Path;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_serial::{ClearBuffer, SerialPort, SerialPortBuilderExt, SerialStream};
 
@@ -332,6 +333,25 @@ impl ZSerial {
     pub fn clear(&self) -> tokio_serial::Result<()> {
         self.serial.clear(ClearBuffer::All)
     }
+}
+
+pub fn get_available_port_names() -> tokio_serial::Result<Vec<String>> {
+    let port_names: Vec<String> = tokio_serial::available_ports()?
+        .iter()
+        .map(|info| {
+            Path::new(&info.port_name)
+                .file_name()
+                .map(|os_str| os_str.to_string_lossy().to_string())
+                .ok_or_else(|| {
+                    tokio_serial::Error::new(
+                        tokio_serial::ErrorKind::Unknown,
+                        "Unsupported port name",
+                    )
+                })
+        })
+        .collect::<Result<Vec<String>, _>>()?;
+
+    Ok(port_names)
 }
 
 #[cfg(test)]
