@@ -10,7 +10,7 @@ on:
       version:
         description: >
           Release version. Can be left unspecified if `dry-run = true`, 
-          in which case the workflow will generate it using `git describe`.
+          in which case the workflow will generate it using `git describe`
         type: string
         required: false
 
@@ -20,7 +20,7 @@ env:
 
 jobs:
   ci:
-    uses: ./.github/workflows/ci.yml@main
+    uses: ./.github/workflows/ci.yml
 
   tag:
     runs-on: [self-hosted, ubuntu-20.04]
