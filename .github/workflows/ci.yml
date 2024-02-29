@@ -12,46 +12,38 @@
 #   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
 #
 
-
 name: CI
 
 on:
   push:
-    branches: [ '**' ]
+    branches: ["**"]
   pull_request:
-    branches: [ '**' ]
+    branches: ["**"]
   schedule:
-    - cron: '0 0 * * 1-5'
+    - cron: "0 0 * * 1-5"
+  workflow_call:
 
 jobs:
   checks:
     name: Code checks
     runs-on: [self-hosted, ubuntu-22.04]
     steps:
-      - uses: actions/checkout@v2
+      - name: Clone this repository
+        uses: actions/checkout@v4
+
       - name: Install Rust toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          components: rustfmt, clippy
+        run: rustup component add rustfmt clippy
+
       - name: Code format check
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: -- --check
+        run: cargo fmt --check
+
       - name: Clippy check
-        uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all-targets -- -D warnings
+        run: cargo clippy --all-targets --all-features -- --deny warnings
+
       - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --release --all-targets
+        run: cargo build --release --all-targets
+
       - name: Run tests
-        uses: actions-rs/cargo@v1
-        with:
-          command: test
-          args: --release --verbose
+        run: cargo test --release --verbose
         env:
           ASYNC_STD_THREAD_COUNT: 4
