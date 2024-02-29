@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Perform a dry-run of the release, without any side-effects
+        type: boolean
+        required: true
+      version:
+        description: >
+          Release version. Can be left unspecified if `dry-run = true`, 
+          in which case the workflow will generate it using `git describe`.
+        type: string
+        required: false
+
+env:
+  ACTOR_NAME: zettascale-bot
+  ACTOR_EMAIL: bot@zettascale.tech
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml@main
+
+  tag:
+    runs-on: [self-hosted, ubuntu-20.04]
+    needs: ci
+    outputs:
+      branch: ${{ steps.tag.outputs.branch }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - id: tag
+        uses: ZettaScaleLabs/ci/tag-crates@develop
+        with:
+          repo: ${{ github.repository }}
+          dry-run: ${{ inputs.dry-run }}
+          github-token: ${{ secrets.ZETTASCALE_BOT_PERSONAL_ACCESS_TOKEN }}
+          actor-name: ${{ env.ACTOR_NAME }}
+          actor-email: ${{ env.ACTOR_EMAIL }}
+          inter-deps-pattern: ^$
+
+  publish-cargo:
+    runs-on: [self-hosted, ubuntu-20.04]
+    needs: tag
+    steps:
+      - uses: ZettaScaleLabs/ci/publish-crates-cargo@develop
+        with:
+          repos: ${{ github.repository }}
+          branch: ${{ needs.tag.outputs.branch }}
+          dry-run: ${{ inputs.dry-run }}
+          github-token: ${{ secrets.ZETTASCALE_BOT_PERSONAL_ACCESS_TOKEN }}
+          crates-io-token: ${{ secrets.ZETTASCALE_CRATES_IO_TOKEN }}
+          inter-deps-pattern: ^$
+
+  publish-github:
+    runs-on: [self-hosted, ubuntu-20.04]
+    needs: tag
+    steps:
+      - if: ${{ !inputs.dry-run }}
+        run: >
+          gh release create ${{ needs.tag.outputs.version }} 
+            --target ${{ needs.tag.outputs.branch }} 
+            --latest 
+            --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.ZETTASCALE_BOT_PERSONAL_ACCESS_TOKEN }}
