@@ -49,7 +49,7 @@ jobs:
           branch: ${{ needs.tag.outputs.branch }}
           dry-run: ${{ inputs.dry-run }}
           github-token: ${{ secrets.ZETTASCALE_BOT_PERSONAL_ACCESS_TOKEN }}
-          crates-io-token: ${{ secrets.ZETTASCALE_CRATES_IO_TOKEN }}
+          crates-io-token: ${{ secrets.ZETTASCALE_BOT_CRATES_IO_TOKEN }}
           inter-deps-pattern: ^$
 
   publish-github:
