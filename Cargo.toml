@@ -1,42 +1,33 @@
-#
-# Copyright (c) 2022 ZettaScale Technology
-#
-# This program and the accompanying materials are made available under the
-# terms of the Eclipse Public License 2.0 which is available at
-# http://www.eclipse.org/legal/epl-2.0, or the Apache License, Version 2.0
-# which is available at https://www.apache.org/licenses/LICENSE-2.0.
-#
-# SPDX-License-Identifier: EPL-2.0 OR Apache-2.0
-#
-# Contributors:
-#   ZettaScale Zenoh Team, <zenoh@zettascale.tech>
-#
-
-
 [package]
 name = "z-serial"
-version = "0.2.3"
+version = "0.3.0-dev-5-g79e47ce"
 edition = "2021"
 repository = "https://github.com/ZettaScaleLabs/z-serial"
 homepage = "http://zenoh.io"
-authors = ["gabrik <gabriele.baldoni@gmail.com>"]
+authors = [ "gabrik <gabriele.baldoni@gmail.com>" ]
 license = " EPL-2.0 OR Apache-2.0"
-categories = ["network-programming"]
+categories = [ "network-programming" ]
 description = "Zenoh Serial Framing"
 readme = "README.md"
 
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
-tokio = {version = "1.17.0", features = ["io-util"] }
 tokio-serial = "5.4.1"
 futures = "0.3.21"
 cobs = "0.2"
 log = "0.4"
 
+[dependencies.tokio]
+version = "1.17.0"
+features = [ "io-util" ]
+
 [dev-dependencies]
-clap = { version = "3.1", features = ["derive"] }
 env_logger = "0.9.0"
-tokio = {version = "1.17.0", features = ["full"] }
 rand = "0.8"
+
+[dev-dependencies.clap]
+version = "3.1"
+features = [ "derive" ]
+
+[dev-dependencies.tokio]
+version = "1.17.0"
+features = [ "full" ]
