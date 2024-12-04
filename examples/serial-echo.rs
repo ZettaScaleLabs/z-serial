@@ -41,20 +41,25 @@ async fn main() -> tokio_serial::Result<()> {
 
     println!("Arguments: {:?}", args);
 
-    let mut port = ZSerial::new(args.port, args.baud_rate, true)?;
+    let mut port = ZSerial::new(args.port, args.baud_rate, false)?;
 
     if args.server {
         loop {
-            match port.read_msg(&mut buff).await {
-                Ok(read) => {
-                    println!(">> Read {read} bytes: {:02X?}", &buff[0..read]);
+            port.accept().await?;
 
-                    port.write(&buff[..read]).await?;
+            'inner: loop {
+                match port.read_msg(&mut buff).await {
+                    Ok(read) => {
+                        println!(">> Read {read} bytes: {:02X?}", &buff[0..read]);
 
-                    println!("<< Echoed back");
-                }
-                Err(e) => {
-                    println!("Got error: {e} received {:02X?}", &buff[..8]);
+                        port.write(&buff[..read]).await?;
+
+                        println!("<< Echoed back");
+                    }
+                    Err(e) => {
+                        println!("Got error: {e} received {:02X?}", &buff[..8]);
+                        break 'inner;
+                    }
                 }
             }
         }
@@ -67,6 +72,8 @@ async fn main() -> tokio_serial::Result<()> {
         } else {
             2.0
         };
+
+        port.connect().await?;
 
         loop {
             tokio::time::sleep(Duration::from_secs_f64(args.interval)).await;
