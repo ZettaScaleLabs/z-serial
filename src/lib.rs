@@ -368,11 +368,6 @@ impl ZSerial {
         self.clear()?;
 
         loop {
-            // while dbg!(self.bytes_to_read()?) == 0 {
-            //     // Waiting to be ready, if not sleep some time.
-            //     tokio::time::sleep(Duration::from_micros(SERIAL_ACCEPT_THROTTLE_TIME_MS)).await;
-            // }
-
             // wait for an empty message with I flag
 
             let (_read, hdr) = self.internal_read(&mut buff).await?;
@@ -389,7 +384,8 @@ impl ZSerial {
         }
     }
 
-    pub async fn connect(&mut self) -> tokio_serial::Result<()> {
+    pub async fn connect(&mut self, tout: Option<Duration>) -> tokio_serial::Result<()> {
+        let tout = tout.unwrap_or(Duration::from_micros(SERIAL_CONNECT_THROTTLE_TIME_US));
         let mut buff = vec![0u8; COBS_BUF_SIZE];
 
         // we must first send a en emtpy message with I flag
@@ -408,7 +404,7 @@ impl ZSerial {
                 break;
             } else if hdr.has_r_flag() {
                 // we received a reset we must resend the init message after a small sleep
-                tokio::time::sleep(Duration::from_micros(SERIAL_CONNECT_THROTTLE_TIME_US)).await;
+                tokio::time::sleep(tout).await;
                 continue;
             } else {
                 return Err(tokio_serial::Error {

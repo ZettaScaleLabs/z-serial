@@ -73,7 +73,7 @@ async fn main() -> tokio_serial::Result<()> {
             2.0
         };
 
-        port.connect().await?;
+        port.connect(None).await?;
 
         loop {
             tokio::time::sleep(Duration::from_secs_f64(args.interval)).await;
