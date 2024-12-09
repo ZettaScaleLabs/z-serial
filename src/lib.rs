@@ -640,12 +640,38 @@ mod tests {
     }
 
     #[test]
-    fn test_serde_empty() {
+    fn test_serde_one_byte() {
         let mut formatter = WireFormat::new();
         let mut ser_buff = vec![0u8; COBS_BUF_SIZE];
         let mut de_buff = vec![0u8; COBS_BUF_SIZE];
 
         let data: Vec<u8> = vec![0x00];
+        let written = formatter
+            .serialize_into(&data, &mut ser_buff, Header::new(0u8))
+            .unwrap();
+
+        println!("Data: {data:02X?}");
+        println!("Serialized: {:02X?}", &ser_buff[0..written]);
+
+        let (read, hdr) = formatter
+            .deserialize_into(&mut ser_buff[0..written], &mut de_buff)
+            .unwrap();
+
+        println!("Deserialized: {:02X?}", &de_buff[0..read]);
+
+        assert_eq!(read, data.len());
+        assert!(!hdr.has_i_flag());
+
+        assert_eq!(data, de_buff[0..read]);
+    }
+
+    #[test]
+    fn test_serde_emtpy() {
+        let mut formatter = WireFormat::new();
+        let mut ser_buff = vec![0u8; COBS_BUF_SIZE];
+        let mut de_buff = vec![0u8; COBS_BUF_SIZE];
+
+        let data: Vec<u8> = vec![];
         let written = formatter
             .serialize_into(&data, &mut ser_buff, Header::new(0u8))
             .unwrap();
