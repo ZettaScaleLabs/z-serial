@@ -103,3 +103,11 @@ fn check_different_bitflips_crc() {
         assert_ne!(crc.compute_crc32(&data), crc.compute_crc32(&bitflipped))
     }
 }
+
+#[test]
+fn check_emtpy_crc() {
+    let crc = CRC32::default();
+    let data: Vec<u8> = vec![];
+
+    assert_eq!(crc.compute_crc32(&data), crc.compute_crc32(&(data.clone())))
+}
