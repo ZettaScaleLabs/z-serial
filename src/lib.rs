@@ -374,7 +374,7 @@ impl ZSerial {
             log::trace!("Received header: {hdr:02X?}");
             if hdr.has_i_flag() {
                 // we send back a message with both I and A flags
-                self.internal_write(&[0u8], Header::new(I_FLAG | A_FLAG))
+                self.internal_write(&[], Header::new(I_FLAG | A_FLAG))
                     .await?;
 
                 // we must set our internal status to initialized
@@ -392,7 +392,7 @@ impl ZSerial {
         loop {
             let hdr = Header::new(I_FLAG);
             log::trace!("Sending {hdr:02X?}");
-            self.internal_write(&[0], hdr).await?;
+            self.internal_write(&[], hdr).await?;
 
             // we then wait for a message with both I and A flags
             let (_read, hdr) = self.internal_read(&mut buff).await?;
@@ -470,7 +470,7 @@ impl ZSerial {
         //TODO: check the kind is the expected one.
         if self.status == Status::Initialized && hdr.has_i_flag() {
             // we must rest the connection here
-            self.internal_write(&[0u8], Header::new(R_FLAG)).await?;
+            self.internal_write(&[], Header::new(R_FLAG)).await?;
             self.status = Status::Uninitialized;
             return Err(tokio_serial::Error {
                 kind: tokio_serial::ErrorKind::InvalidInput,
