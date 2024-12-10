@@ -425,7 +425,21 @@ impl ZSerial {
         Ok(())
     }
 
+    async fn check_device(&self) -> tokio_serial::Result<()> {
+        // check if the file is still there
+        if !tokio::fs::metadata(self.port.clone()).await.is_ok() {
+            // the file does not exist anymore returing an error
+            return Err(tokio_serial::Error::new(
+                tokio_serial::ErrorKind::NoDevice,
+                format!("Serial device disappeared"),
+            ));
+        }
+        return Ok(());
+    }
     async fn internal_read(&mut self, buff: &mut [u8]) -> tokio_serial::Result<(usize, Header)> {
+        //check if the device is sitll there
+        self.check_device().await?;
+
         let mut start_count = 0;
 
         if buff.len() < MAX_MTU {
@@ -497,6 +511,9 @@ impl ZSerial {
     }
 
     async fn internal_write(&mut self, buff: &[u8], hdr: Header) -> tokio_serial::Result<()> {
+        //check if the device is sitll there
+        self.check_device().await?;
+
         // Serialize
         let written = self
             .formatter
