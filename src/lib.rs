@@ -427,14 +427,14 @@ impl ZSerial {
 
     async fn check_device(&self) -> tokio_serial::Result<()> {
         // check if the file is still there
-        if !tokio::fs::metadata(self.port.clone()).await.is_ok() {
+        if tokio::fs::metadata(self.port.clone()).await.is_err() {
             // the file does not exist anymore returing an error
             return Err(tokio_serial::Error::new(
                 tokio_serial::ErrorKind::NoDevice,
-                format!("Serial device disappeared"),
+                "Serial device disappeared".to_string(),
             ));
         }
-        return Ok(());
+        Ok(())
     }
     async fn internal_read(&mut self, buff: &mut [u8]) -> tokio_serial::Result<(usize, Header)> {
         //check if the device is sitll there
