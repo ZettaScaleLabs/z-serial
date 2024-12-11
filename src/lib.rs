@@ -330,6 +330,13 @@ pub struct ZSerial {
     status: Status,
 }
 
+
+#[cfg(windows)]
+unsafe impl Send for ZSerial {}
+
+#[cfg(windows)]
+unsafe impl Sync for ZSerial {}
+
 impl ZSerial {
     pub fn new(port: String, baud_rate: u32, exclusive: bool) -> tokio_serial::Result<Self> {
         let mut serial = tokio_serial::new(port.clone(), baud_rate).open_native_async()?;
